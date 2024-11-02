@@ -115,7 +115,7 @@ async def handle_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # تابع اصلی برای راه‌اندازی ربات
 def main():
-    application = Application.builder().token("YOUR_TELEGRAM_BOT_TOKEN").build()
+    application = Application.builder().token("8044636479:AAHxFg13xM8uRb24Ds7wKvi9C3A82LUGNC4").build()
 
     # افزودن هندلرها
     application.add_handler(CommandHandler("start", start))
