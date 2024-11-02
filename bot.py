@@ -4,6 +4,8 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 import re
 
 
+TELEGRAM_TOKEN="8044636479:AAHxFg13xM8uRb24Ds7wKvi9C3A82LUGNC4"
+
 # کلاس های مسابقه و پیش بینی
 class Match:
     def __init__(self, host_team, guest_team, host_score, guest_score):
@@ -123,7 +125,8 @@ async def text_handler(update: Update, context: CallbackContext) -> None:
 
 # تنظیمات اصلی و راه‌اندازی ربات
 def main():
-    application = ApplicationBuilder().token("8044636479:AAHxFg13xM8uRb24Ds7wKvi9C3A82LUGNC4").build()
+
+    application = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CallbackQueryHandler(button_handler))
