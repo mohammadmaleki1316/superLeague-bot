@@ -1,129 +1,134 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, CallbackContext, \
+    CallbackQueryHandler
 import re
 
 
-# کلاس مسابقه و پیش‌بینی
+# کلاس های مسابقه و پیش بینی
 class Match:
-    def __init__(self, home_team, away_team, home_goals, away_goals):
-        self.home_team = home_team
-        self.away_team = away_team
-        self.home_goals = home_goals
-        self.away_goals = away_goals
+    def __init__(self, host_team, guest_team, host_score, guest_score):
+        self.host_team = host_team
+        self.guest_team = guest_team
+        self.host_score = host_score
+        self.guest_score = guest_score
 
 
-class Prediction:
-    def __init__(self, home_team, away_team, home_goals, away_goals, double=False):
-        self.home_team = home_team
-        self.away_team = away_team
-        self.home_goals = home_goals
-        self.away_goals = away_goals
-        self.double = double
+class Prediction(Match):
+    def __init__(self, host_team, guest_team, host_score, guest_score, multiplier):
+        super().__init__(host_team, guest_team, host_score, guest_score)
+        self.multiplier = multiplier
 
 
-# متغیرهای سراسری برای ذخیره مسابقات و پیش‌بینی‌ها
-actual_matches = []
-predictions = []
-
-
-# هندلر برای شروع ربات و نمایش دکمه‌ها
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [InlineKeyboardButton("ارسال نتایج واقعی", callback_data='request_actual')],
-        [InlineKeyboardButton("ارسال پیش‌بینی", callback_data='request_prediction')],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("یکی از گزینه‌ها را انتخاب کنید:", reply_markup=reply_markup)
-
-
-# هندلر برای کلیک روی دکمه‌ها
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-
-    if query.data == 'request_actual':
-        await query.message.reply_text("لطفاً نتایج واقعی مسابقات را به فرمت 'تیم1 2 - 1 تیم2' ارسال کنید.")
-    elif query.data == 'request_prediction':
-        await query.message.reply_text("لطفاً پیش‌بینی خود را به فرمت 'تیم1 2 - 1 تیم2' ارسال کنید.")
-
-
-# تابعی برای پردازش متن مسابقات
-def parse_matches(text):
+# توابع کمکی برای تجزیه و تحلیل متن
+def parse_text_to_matches(text, is_prediction=False):
+    lines = text.strip().splitlines()
     matches = []
-    lines = text.strip().split('\n')
     for line in lines:
-        match = re.match(r'(.+?)\s+(\d+)\s*-\s*(\d+)\s+(.+)', line)
-        if match:
-            home_team, home_goals, away_goals, away_team = match.groups()
-            matches.append(Match(home_team.strip(), away_team.strip(), int(home_goals), int(away_goals)))
+        parts = re.match(r"(.+?)\s+(\d+)\s*-\s*(\d+)\s+(.+?)(\sx2)?$", line)
+        if parts:
+            host_team = parts.group(1).strip()
+            guest_team = parts.group(4).strip()
+            host_score = int(parts.group(2))
+            guest_score = int(parts.group(3))
+            multiplier = 2 if parts.group(5) and is_prediction else 1
+            if is_prediction:
+                matches.append(Prediction(host_team, guest_team, host_score, guest_score, multiplier))
+            else:
+                matches.append(Match(host_team, guest_team, host_score, guest_score))
     return matches
 
 
-# هندلر برای دریافت نتایج واقعی
-async def handle_actual_results(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global actual_matches
-    actual_matches = parse_matches(update.message.text)
-    await update.message.reply_text("نتایج واقعی ثبت شد. اکنون می‌توانید پیش‌بینی خود را ارسال کنید.")
-
-
-# هندلر برای دریافت پیش‌بینی‌ها و محاسبه امتیاز
-async def handle_prediction(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global predictions, actual_matches
-
-    # تبدیل متن به لیست پیش‌بینی‌ها
-    predictions = parse_matches(update.message.text)
-
-    # محاسبه امتیاز کل
-    total_score = 0
+# تابع محاسبه امتیاز
+def calculate_score(real_matches, predictions):
+    score = 0
     for prediction in predictions:
-        for actual_match in actual_matches:
-            if prediction.home_team == actual_match.home_team and prediction.away_team == actual_match.away_team:
-                if (prediction.home_goals == actual_match.home_goals and
-                        prediction.away_goals == actual_match.away_goals):
-                    score = 10
-                elif (actual_match.home_goals - actual_match.away_goals ==
-                      prediction.home_goals - prediction.away_goals):
-                    score = 5
-                elif (actual_match.home_goals > actual_match.away_goals and
-                      prediction.home_goals > prediction.away_goals) or \
-                        (actual_match.home_goals < actual_match.away_goals and
-                         prediction.home_goals < prediction.away_goals):
-                    score = 2
-                elif actual_match.home_goals == actual_match.away_goals and \
-                        prediction.home_goals == prediction.away_goals:
-                    score = 5
-                else:
-                    score = 0
+        for match in real_matches:
+            if prediction.host_team == match.host_team and prediction.guest_team == match.guest_team:
+                if prediction.host_score == match.host_score and prediction.guest_score == match.guest_score:
+                    score += 10 * prediction.multiplier
+                elif (prediction.host_score - prediction.guest_score) == (match.host_score - match.guest_score):
+                    score += 5 * prediction.multiplier
+                elif ((prediction.host_score > prediction.guest_score) and (match.host_score > match.guest_score)) or \
+                        ((prediction.host_score < prediction.guest_score) and (match.host_score < match.guest_score)):
+                    score += 2 * prediction.multiplier
+                elif prediction.host_score == prediction.guest_score and match.host_score == match.guest_score:
+                    score += 5 * prediction.multiplier
+    return score
 
-                # چک کردن دو برابر شدن امتیاز
-                if prediction.double:
-                    score *= 2
 
-                total_score += score
-                break
+# متغیرهای وضعیت
+real_matches = []
+predictions = []
+is_receiving_results = False
+is_receiving_predictions = False
 
-    # ارسال امتیاز کل
-    await update.message.reply_text(f"امتیاز شما: {total_score}")
 
-    # بازگرداندن دکمه‌ی "ارسال پیش‌بینی"
+# تابع برای نمایش دکمه‌های اصلی
+def show_main_buttons():
     keyboard = [
-        [InlineKeyboardButton("ارسال پیش‌بینی", callback_data='request_prediction')],
+        [InlineKeyboardButton("نتایج دقیق", callback_data="send_results")],
+        [InlineKeyboardButton("پیش‌بینی", callback_data="send_predictions")],
+        [InlineKeyboardButton("شروع", callback_data="start")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("برای ارسال پیش‌بینی جدید دکمه زیر را فشار دهید:", reply_markup=reply_markup)
+    return InlineKeyboardMarkup(keyboard)
 
 
-# تابع اصلی برای راه‌اندازی ربات
+# هندلر شروع
+async def start(update: Update, context: CallbackContext) -> None:
+    await update.message.reply_text("لطفاً یکی از گزینه‌های زیر را انتخاب کنید:", reply_markup=show_main_buttons())
+
+
+# هندلر برای دریافت نوع ورودی از طریق دکمه‌ها
+async def button_handler(update: Update, context: CallbackContext) -> None:
+    global is_receiving_results, is_receiving_predictions, real_matches, predictions
+
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "send_results":
+        is_receiving_results = True
+        is_receiving_predictions = False
+        real_matches = []  # پاک کردن نتایج قبلی
+        await query.edit_message_text("نتایج واقعی مسابقات را ارسال کنید:", reply_markup=show_main_buttons())
+
+    elif query.data == "send_predictions":
+        is_receiving_results = False
+        is_receiving_predictions = True
+        predictions = []  # پاک کردن پیش‌بینی‌های قبلی
+        await query.edit_message_text("پیش‌بینی‌های خود را ارسال کنید:", reply_markup=show_main_buttons())
+
+    elif query.data == "start":
+        is_receiving_results = False
+        is_receiving_predictions = False
+        await query.edit_message_text("ربات شروع به کار کرد.", reply_markup=show_main_buttons())
+
+
+# هندلر برای پردازش پیام‌های متنی کاربر
+async def text_handler(update: Update, context: CallbackContext) -> None:
+    global is_receiving_results, is_receiving_predictions, real_matches, predictions
+
+    text = update.message.text
+
+    if is_receiving_results:
+        real_matches = parse_text_to_matches(text)
+        is_receiving_results = False  # پایان حالت دریافت نتایج
+        await update.message.reply_text("نتایج واقعی ثبت شد.", reply_markup=show_main_buttons())
+
+    elif is_receiving_predictions:
+        predictions = parse_text_to_matches(text, is_prediction=True)
+        is_receiving_predictions = False  # پایان حالت دریافت پیش‌بینی
+        score = calculate_score(real_matches, predictions)
+        await update.message.reply_text(f"پیش‌بینی شما ثبت شد و امتیاز شما: {score}", reply_markup=show_main_buttons())
+
+
+# تنظیمات اصلی و راه‌اندازی ربات
 def main():
-    application = Application.builder().token("8044636479:AAHxFg13xM8uRb24Ds7wKvi9C3A82LUGNC4").build()
+    application = ApplicationBuilder().token("8044636479:AAHxFg13xM8uRb24Ds7wKvi9C3A82LUGNC4").build()
 
-    # افزودن هندلرها
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CallbackQueryHandler(button))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_actual_results))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_prediction))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # شروع ربات
     application.run_polling()
 
 
